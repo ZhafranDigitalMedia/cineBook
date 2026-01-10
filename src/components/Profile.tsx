@@ -2,89 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { collection, getDocs, query, where, doc, getDoc } from "firebase/firestore";
-import { auth, db } from "../utils/firebase";
-
-interface UserProfile {
-  name: string;
-  email: string;
-  no_telp: string;
-  role: string;
-}
+import { ProfileController } from "../controllers/ProfileController";
+import { UserProfile } from "../models/UserProfile";
 
 export default function Profile() {
   const router = useRouter();
-
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [totalTicket, setTotalTicket] = useState(0);
-  const [totalFavorite, setTotalFavorite] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // ============================
-  // AUTH + FETCH DATA
-  // ============================
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) {
-        router.replace("/login");
-        return;
-      }
-
-      try {
-        // 🔹 ambil data user
-        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
-        if (userSnap.exists()) {
-          setUser(userSnap.data() as UserProfile);
-        }
-
-        // 🔹 hitung tiket
-        const ticketSnap = await getDocs(
-          query(
-            collection(db, "tickets"),
-            where("userId", "==", firebaseUser.uid)
-          )
-        );
-        setTotalTicket(ticketSnap.size);
-
-        // 🔹 hitung favorite
-        const favSnap = await getDocs(
-          query(
-            collection(db, "favorites"),
-            where("userId", "==", firebaseUser.uid)
-          )
-        );
-        setTotalFavorite(favSnap.size);
-      } catch (err) {
-        console.error("Profile error:", err);
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    return () => unsub();
+    ProfileController.loadProfile()
+      .then(setUser)
+      .catch(() => router.replace("/login"))
+      .finally(() => setLoading(false));
   }, [router]);
 
   if (loading || !user) {
-    return (
-      <p style={{ color: "white", padding: "50px" }}>
-        Loading profile...
-      </p>
-    );
+    return <p style={{ color: "white", padding: "50px" }}>Loading profile...</p>;
   }
 
   return (
-    <div className="min-h-screen bg-[#6A77E0] px-4 py-6 sm:py-10">
-      <div className="bg-white rounded-3xl p-5 sm:p-8 max-w-4xl mx-auto shadow-xl">
-        {/* TITLE */}
-        <div className="flex items-center gap-3 mb-8">
-          <span className="text-2xl">👤</span>
-          <h2 className="text-2xl sm:text-3xl font-bold text-gray-800">
-            Profile
-          </h2>
-        </div>
+    <div className="min-h-screen bg-[#6A77E0] px-4 py-6">
+      <div className="bg-white rounded-3xl p-8 max-w-4xl mx-auto shadow-xl">
 
-        {/* PROFILE CARD */}
+        <h2 className="text-3xl font-bold mb-6 text-black">Profile</h2>
+
         <div className="bg-gradient-to-br from-indigo-500 to-purple-500
                       rounded-3xl p-6 sm:p-8 text-white text-center
                       max-w-md mx-auto mb-8">
@@ -95,46 +37,36 @@ export default function Profile() {
           </div>
 
           <h3 className="text-lg sm:text-xl font-semibold">
-            {user.name}
+            {user.getName()}
           </h3>
-          <p className="text-sm sm:text-base mt-1">✉️ {user.email}</p>
-          <p className="text-sm sm:text-base">📞 {user.no_telp}</p>
+          <p className="text-sm sm:text-base mt-1">✉️ {user.getEmail()}</p>
+          <p className="text-sm sm:text-base">📞 {user.getPhone()}</p>
           <p className="text-sm sm:text-base mt-2">
-            Role: <span className="font-semibold capitalize">{user.role}</span>
+            Role: <span className="font-semibold capitalize">{user.getRole()}</span>
           </p>
         </div>
 
-        {/* STATS */}
-        {user.role !== "admin" && (
-          <div className="grid grid-cols-2 gap-4 max-w-md mx-auto mb-8">
-            <StatCard icon="🎟️" value={totalTicket} label="Tiket Dibeli" />
-            <StatCard icon="❤️" value={totalFavorite} label="Film Favorit" />
+        {user.getRole() !== "admin" && (
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <StatCard icon="🎟️" value={user.getTotalTicket()} label="Tiket Dibeli" />
+            <StatCard icon="❤️" value={user.getTotalFavorite()} label="Film Favorit" />
           </div>
         )}
 
-        {/* LOGOUT */}
-        <div className="max-w-md mx-auto">
-          <button
-            onClick={async () => {
-              await signOut(auth);
-              router.replace("/login");
-            }}
-            className="w-full py-3 rounded-xl bg-red-500
-                     text-white font-semibold hover:bg-red-600
-                     transition"
-          >
-            Logout
-          </button>
-        </div>
+        <button
+          onClick={async () => {
+            await ProfileController.logout();
+            router.replace("/login");
+          }}
+          className="w-full py-3 rounded-xl bg-red-500 text-white font-semibold"
+        >
+          Logout
+        </button>
       </div>
     </div>
   );
-
 }
 
-// =========================
-// STAT CARD
-// =========================
 function StatCard({
   icon,
   value,

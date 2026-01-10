@@ -2,17 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   getDocs,
-  addDoc,
+  onSnapshot,
   query,
   where,
-  Timestamp,
-  onSnapshot,
 } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+
 import { auth, db } from "../../../utils/firebase";
+import { Ticket } from "../../../models/Ticket";
+import { TicketController } from "../../../controllers/TicketController";
 
 interface Cinema {
   id: string;
@@ -40,12 +41,12 @@ export default function BookingPage() {
   const [bookedSeats, setBookedSeats] = useState<string[]>([]);
 
   // ======================
-  // AUTH
+  // AUTH CHECK
   // ======================
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user) {
-        router.push("/login");
+        router.replace("/login");
         return;
       }
       setUserId(user.uid);
@@ -63,50 +64,48 @@ export default function BookingPage() {
   }, []);
 
   // ======================
-  // FETCH CINEMA
+  // FETCH CINEMA (REALTIME)
   // ======================
   useEffect(() => {
-    const fetchCinema = async () => {
-      const snap = await getDocs(collection(db, "cinemas"));
+    const q = collection(db, "cinemas");
+
+    const unsub = onSnapshot(q, (snap) => {
       const data = snap.docs.map((doc) => ({
         id: doc.id,
         ...(doc.data() as Omit<Cinema, "id">),
       }));
+
       setCinemaList(data);
       setLoadingCinema(false);
-    };
-
-    fetchCinema();
-  }, []);
-
-  // ======================
-  // REALTIME BOOKED SEATS
-  // ======================
-  useEffect(() => {
-    if (!selectedCinema || !selectedTime || !movieTitle) {
-      setBookedSeats([]);
-      return;
-    }
-
-    const q = query(
-      collection(db, "tickets"),
-      where("cinemaId", "==", selectedCinema.id),
-      where("schedule", "==", selectedTime),
-      where("filmTitle", "==", movieTitle)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const seats = snapshot.docs.map(
-        (doc) => doc.data().seat as string
-      );
-      setBookedSeats(seats);
     });
 
     return () => unsub();
+  }, []);
+
+  // ======================
+  // FETCH BOOKED SEATS
+  // ======================
+  useEffect(() => {
+    const fetchSeats = async () => {
+      if (!selectedCinema || !selectedTime || !movieTitle) {
+        setBookedSeats([]);
+        return;
+      }
+
+      const seats = await TicketController.getBookedSeats(
+        selectedCinema.id,
+        selectedTime,
+        movieTitle
+      );
+
+      setBookedSeats(seats);
+    };
+
+    fetchSeats();
   }, [selectedCinema, selectedTime, movieTitle]);
 
   // ======================
-  // BOOKING
+  // BOOK TICKET
   // ======================
   const handleBooking = async () => {
     if (!userId || !selectedCinema || !selectedTime || !selectedSeat) {
@@ -114,23 +113,22 @@ export default function BookingPage() {
       return;
     }
 
-    // 🔒 DOUBLE CHECK (ANTI TABRUK)
     if (bookedSeats.includes(selectedSeat)) {
       alert("Kursi sudah terisi!");
       return;
     }
 
-    await addDoc(collection(db, "tickets"), {
+    const ticket = new Ticket(
       userId,
-      cinemaId: selectedCinema.id,
-      cinemaName: selectedCinema.name,
-      filmTitle: movieTitle,
-      schedule: selectedTime,
-      seat: selectedSeat,
-      price: selectedCinema.price,
-      orderDate: Timestamp.now(),
-    });
+      selectedCinema.id,
+      selectedCinema.name,
+      movieTitle,
+      selectedTime,
+      selectedSeat,
+      selectedCinema.price
+    );
 
+    await TicketController.book(ticket);
     router.push("/history");
   };
 
@@ -144,7 +142,10 @@ export default function BookingPage() {
         <p className="text-gray-500 mb-6">Booking tiket film</p>
 
         {/* CINEMA */}
-        <h2 className="font-semibold text-lg mb-2 text-black">Pilih Cinema</h2>
+        <h2 className="font-semibold text-lg mb-2 text-black">
+          Pilih Cinema
+        </h2>
+
         {loadingCinema ? (
           <p>Loading...</p>
         ) : (
@@ -164,7 +165,7 @@ export default function BookingPage() {
               >
                 <p className="font-semibold text-black">{cinema.name}</p>
                 <p className="text-sm text-gray-500">
-                  Rp {cinema.price.toLocaleString()}
+                  Rp {cinema.price.toLocaleString("id-ID")}
                 </p>
               </button>
             ))}
@@ -175,7 +176,8 @@ export default function BookingPage() {
         <h2 className="font-semibold text-lg mt-6 mb-2 text-black">
           Jadwal Tayang
         </h2>
-        <div className="flex gap-3 flex-wrap text-black">
+
+        <div className="flex gap-3 flex-wrap">
           {times.map((t) => (
             <button
               key={t}
@@ -185,8 +187,8 @@ export default function BookingPage() {
               }}
               className={`px-6 py-2 rounded-xl border
                 ${selectedTime === t
-                  ? "bg-blue-700 border-blue-700"
-                  : "border-gray-700"
+                  ? "bg-blue-700 text-white border-blue-700"
+                  : "border-gray-400 text-black"
                 }`}
             >
               {t}
@@ -199,7 +201,7 @@ export default function BookingPage() {
           Pilih Kursi
         </h2>
 
-        <div className="bg-gray-500 text-center py-2 rounded-lg font-semibold mb-6">
+        <div className="bg-gray-500 text-white text-center py-2 rounded-lg font-semibold mb-6">
           LAYAR
         </div>
 
@@ -237,7 +239,8 @@ export default function BookingPage() {
         {/* SUBMIT */}
         <button
           onClick={handleBooking}
-          className="mt-8 w-full bg-purple-600 text-white p-3 rounded-xl font-bold"
+          className="mt-8 w-full bg-purple-600 hover:bg-purple-700
+                     text-white p-3 rounded-xl font-bold"
         >
           Pesan Tiket
         </button>
